@@ -8,6 +8,7 @@
 ###############################
 # Steps taken/performed
 # 1) Data initial preprocessing (Target Variable Analysis)
+# 2) EXploratory Data Aalysis
 # 2) Feature Engineering
 # 3) Tokenization
 # 4) TF/IDF of all tokena
@@ -38,6 +39,7 @@ library(stringr)
 library(quanteda)
 library(Matrix)
 library(ggplot2)
+library(wordcloud)
 
 ################################
 # ------- First Step-----------
@@ -65,15 +67,106 @@ train <- train %>%
 
 ggplot(data=train,aes(x=price)) + 
   geom_histogram(fill='red') + 
-  labs(title='Histogram of Prices')
+  labs(title='Histogram of Prices') +
+  xlab('Price')
 
 ggplot(data=train,aes(x=log(price)+1)) + 
   geom_histogram(fill='red') + 
-  labs(title='Histogram of Prices')
+  labs(title='Log Transform: Histogram of Prices') +
+  xlab('Price-Log')
 
 # Set our price to price log as our metrics are rmsLe and data is skewed
 
 train$price_log <- log(train$price+1)
+
+
+#############################
+# Exploratory Data Analysis
+#############################
+
+##################
+# Item Condition
+##################
+train[, .N, by = item_condition_id] %>%
+  ggplot(aes(x = as.factor(item_condition_id), 
+             y = N/1000)) +
+  geom_bar(stat = 'identity', 
+           fill = 'cyan2') + 
+  labs(x = 'Item condition', 
+       y = 'Number of items (000s)', 
+       title = 'Number of items by condition category')
+# The item condition ranges from 1 to 5. 
+# There are more items of condition 1 than any other. 
+# Items of condition 4 and 5 are relatively rare. 
+# It's not clear from the data description what the ordinality of this variable is. 
+# My assumption is that since conditions 4 and 5 are so rare these are likely the better condition items. 
+# We can try and verify this. If a higher item condition is better, 
+# it should have a positive correlation with price. Let's see if that is the case.
+
+train[, .(.N, median_price = median(price)), by = item_condition_id][order(item_condition_id)]
+ggplot(data = train, 
+       aes(x = as.factor(item_condition_id), 
+           y = log(price + 1))) + 
+  geom_boxplot(fill = 'cyan2', 
+               color = 'darkgrey')
+
+#######################
+# Shipping
+######################
+
+table(train$shipping)
+
+# My inital thought is that items where the shipping fee is paid by the seller will be higher-priced. 
+#However, there are a number of conflating factors. T
+# This may be true within specific product categories and item conditions, 
+# but not when comparing items on the aggregate. Let's see.
+
+train %>%
+  ggplot(aes(x = log(price+1), fill = factor(shipping))) + 
+  geom_density(adjust = 2, alpha = 0.6) + 
+  labs(x = 'Log price', y = '', title = 'Distribution of price by shipping') #Items where the shipping is paid by the seller have a lower average price.
+
+
+########################
+# Brand
+########################
+
+train[, .(median_price = median(price)), by = brand_name] %>%
+  head(25) %>%
+  ggplot(aes(x = reorder(brand_name, median_price), y = median_price)) + 
+  geom_point(color = 'red') + 
+  scale_y_continuous(labels = scales::dollar) + 
+  coord_flip() +
+  labs(x = '', y = 'Median price', title = 'Top 25 most expensive brands')
+# Leaving NA part 
+
+####################
+# Item category
+###################
+train[, .(median = median(price)), by = category_name][order(median, decreasing = TRUE)][1:30] %>%
+  ggplot(aes(x = reorder(category_name, median), y = median)) + 
+  geom_point(color = 'orangered2') + 
+  coord_flip() + 
+  labs(x = '', y = 'Median price', title = 'Median price by item category (Top 30)') + 
+  scale_y_continuous(labels = scales::dollar)
+
+#################################
+# Word cloud - brand Name
+#################################
+
+train$brand_name <- toupper(train$brand_name)
+train_brand <- table(train[,5])
+train_brand <- data.frame(train_brand)
+colnames(train_brand) <- c("brand", "freq")
+train_brand <- train_brand[order(train_brand$freq, decreasing=TRUE),]
+
+
+train_brand_cloud <- train_brand[c(2:200),] 
+#As the wordcloud has limitation on no. of character, you would see some error below
+
+wordcloud(words = train_brand_cloud$brand, freq = train_brand_cloud$freq, min.freq = 1,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
 
 #########################################
 # ----------------- Second Step----------
@@ -298,7 +391,7 @@ dtrain1 <- xgb.DMatrix(sparse_train,
                        label=data.matrix(Label))
 
 # Set up xg boost paramters
-
+# optimal paramters, find from hyper parameter tuning
 xgb_params <- list(booster = 'gbtree',
                    colsample_bytree=0.7,
                    subsample=0.7,
@@ -311,4 +404,39 @@ xgb_params <- list(booster = 'gbtree',
 
 ##################################
 # Modelling Steps
-# Set timer to see hoe long will it take 
+# Set timer to see how long will it take
+# Set seed
+# TRain the model
+# Show model results
+# Check the timing
+# Prediction
+###################################
+
+start.time <- Sys.time()
+
+set.seed(400)
+
+xgb.model <- xgb.train(params = xgb_params,
+                       data = dtrain1,
+                       nrounds = 500,
+                       watchlist = list(train=dtrain1),
+                       print_every_n = 50,
+                       early_stopping_rounds = 100)
+xgb.model
+
+total.time <- Sys.time() - start.time
+total.time
+
+pred <- predict(xgb.model,sparse_test)
+head(pred)
+
+# convert back to prce value to exp
+
+# make a csv, data frame from our predictions
+results = data.frame(
+  test_id = as.integer(seq_len(nrow(test)) - 1),
+  price = pred
+)
+
+# Make a csv file for submission
+write.csv(results, file = "xgb_2.csv", row.names = FALSE)

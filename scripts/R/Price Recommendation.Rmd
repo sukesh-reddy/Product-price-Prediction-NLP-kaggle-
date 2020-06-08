@@ -3,6 +3,10 @@ title: "Mercari Price Suggestion Challenge"
 author: "Sukesh_reddy"
 date: "08/06/2020"
 output:
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
   html_document:
     df_print: paged
     toc: yes

@@ -1,0 +1,15 @@
+base
+knitr
+data.table
+xgboost
+NLP
+tm
+dplyr
+plyr
+stringi
+stringr
+quanteda
+Matrix
+ggplot2
+RColorBrewer
+wordcloud

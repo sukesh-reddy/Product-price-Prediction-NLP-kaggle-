@@ -1,0 +1,8 @@
+unnamed-chunk-1	library	ls	rm
+unnamed-chunk-2	c	fread	head	print	str
+unnamed-chunk-3	!=	$	$<-	%>%	.	.N	::	aes	as.factor	brand_name	brewer.pal	c	category_name	colnames<-	coord_flip	data.frame	factor	filter	geom_bar	geom_boxplot	geom_density	geom_histogram	geom_point	ggplot	head	item_condition_id	labs	log	median	median_price	N	order	price	reorder	scale_y_continuous	shipping	table	toupper	wordcloud	xlab
+unnamed-chunk-4	$	$<-	[<-	as_tibble	bind_cols	bind_rows	colSums	head	is.na	names<-	nchar	nrow	paste0	print	rm	str_count	str_split
+unnamed-chunk-5	$	all	dfm	dfm_tfidf	dfm_trim	dim	gc	stopwords	T	tokens	tokens_select	tokens_tolower	tokens_wordstem	topfeatures
+unnamed-chunk-6	$	~	all	cbind	class	class<-	nrow	options	seq	seq_len	sparse.model.matrix	train
+unnamed-chunk-7	data.matrix	list	price	set.seed	sparse_test	sparse_train	Sys.time	xgb.DMatrix	xgb.train
+unnamed-chunk-8	as.integer	data.frame	nrow	predict	seq_len	sparse_test	test	write.csv	xgb.model

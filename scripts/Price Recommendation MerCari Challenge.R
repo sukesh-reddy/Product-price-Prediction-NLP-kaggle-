@@ -245,7 +245,9 @@ topfeatures((all.names.tfidf))
 
 
 #####################################################
-# ------------ Creating a aprase matrix-------------
+# ------------ FIFTH STEP-------------
+
+# Creating a sparse matrix
 #####################################################
 
 
@@ -261,9 +263,8 @@ options(na.action='na.pass')
 sparse_matrix = sparse.model.matrix(~item_condition_id + brand_name + shipping + name_length + 
                                       description_length + name_words + description_words + 
                                       category1 + category2 + category3,
-                                    data = all)
-# here we have included all of our initial variables, except the text variables (name and description),
-# which we have preprocessed separately
+                                    data = all)         # here we have included all of our initial variables, except the text variables (name and description),
+                                                        # which we have preprocessed separately
 
 class(all.items.tfidf) = class(sparse_matrix)
 class(all.names.tfidf) = class(sparse_matrix)
@@ -271,3 +272,43 @@ class(all.names.tfidf) = class(sparse_matrix)
 #COMBINE OUR NEWLY CREATED SPARSE_MATRIX WITH OUR PREPROCESSED TF/IDF TEXT DATAFRAMES
 data = cbind(sparse_matrix, all.items.tfidf, all.names.tfidf)
 
+# Turn off the na.action setting
+options(na.action=previous_na_action$na.action)
+
+# Splitting back the train and test sets
+sparse_train <- data[seq_len(nrow(train)),]
+  
+sparse_test <- data[seq(from=nrow(train)+1,to=nrow(data)),]
+
+#######################################
+#------------- SIXTH STEP---------
+
+# Modelling (XG BOOST)
+######################################
+
+# We will train our model using xgboostwith cross-validation
+
+# Set the target variable
+Label <- price
+
+# Next we will create DMatrix from test and train sets in order to feed them properly to our xgboost
+
+dtest1 <- xgb.DMatrix(sparse_test)
+dtrain1 <- xgb.DMatrix(sparse_train,
+                       label=data.matrix(Label))
+
+# Set up xg boost paramters
+
+xgb_params <- list(booster = 'gbtree',
+                   colsample_bytree=0.7,
+                   subsample=0.7,
+                   eta=0.05,
+                   objective='reg:linear',
+                   max_depth = 5,
+                   min_child_weight= 1,
+                   eval_metric= "rmse")
+
+
+##################################
+# Modelling Steps
+# Set timer to see hoe long will it take 

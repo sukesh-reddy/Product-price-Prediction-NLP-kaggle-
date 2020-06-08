@@ -1,0 +1,470 @@
+---
+title: "Mercari Price Suggestion Challenge"
+author: "Sukesh_reddy"
+date: "08/06/2020"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/sukes/Desktop/Projects/product_price_prediction_NLP')
+
+# set global chunk options: 
+library(knitr)
+opts_chunk$set(cache=TRUE, autodep = TRUE)
+dep_auto()
+```
+
+## [Kaggle Link/ Data For This Challenge ](https://www.kaggle.com/c/mercari-price-suggestion-challenge )
+
+# Problem Statement:
+
+      In this competition, Mercari’s challenging us to build an algorithm that automatically suggests the right product prices. You’ll be provided user-inputted text descriptions of their products, including details like product category name, brand name, and item condition.
+
+# Steps Followed/Performed:
+  
+  * Setting the Working Space envoirnment
+  * Initial Data Sourcing and Preprocessing
+  * Exploratory Data Analysis
+  * Feature ENgineering
+  * Tokenization and TF-IDF Implementing
+  * Sparse Matrix Creation
+  * Model Training
+  * Predicitons and Saving to CSV file
+  * Conclusion
+  
+
+# 1) Setting the Working Space
+
+```{r }
+# Clearing the space/memory in the envoirnment
+rm(list = ls()) 
+
+# Setting the working directory
+#setwd('C:\\Users\\sukes\\Desktop\\Projects\\product_price_prediction_NLP')
+
+# Loading the required libraries
+library(data.table)
+library(xgboost)
+library(tm)
+library(dplyr)
+library(plyr)
+library(stringi)
+library(stringr)
+library(quanteda)
+library(Matrix)
+library(ggplot2)
+library(wordcloud)
+
+```
+
+# 2) Initial Data Sourcing and Pre-Processing
+
+```{r}
+# Read the data
+train = fread('train.tsv',na.strings = c("",NA, 'NULL'))
+test = fread('test.tsv',na.strings = c("",NA, 'NULL'))
+
+# Looking into the train data
+str(train)
+print(head(train))
+
+# Looking into the test data
+str(test)
+print(head(test))
+
+```
+
+# 3) Exploratory Data Analysis
+
+```{r}
+
+###############################
+# Target Variable Analysis
+###############################
+
+# Initial prepocessing - Remove entries with price 0 as they give littile help predicting the price 
+train <- train %>%
+          filter(price !=0)
+
+ggplot(data=train,aes(x=price)) + 
+  geom_histogram(fill='red') + 
+  labs(title='Histogram of Prices') +
+  xlab('Price')
+
+ggplot(data=train,aes(x=log(price)+1)) + 
+  geom_histogram(fill='red') + 
+  labs(title='Log Transform: Histogram of Prices') +
+  xlab('Price-Log')
+
+# Set our price to price log as our metrics are rmsLe and data is skewed
+
+train$price_log <- log(train$price+1)
+
+##################
+# Item Condition
+##################
+train[, .N, by = item_condition_id] %>%
+  ggplot(aes(x = as.factor(item_condition_id), 
+             y = N/1000)) +
+  geom_bar(stat = 'identity', 
+           fill = 'cyan2') + 
+  labs(x = 'Item condition', 
+       y = 'Number of items (000s)', 
+       title = 'Number of items by condition category')
+# The item condition ranges from 1 to 5. 
+# There are more items of condition 1 than any other. 
+# Items of condition 4 and 5 are relatively rare. 
+# It’s not clear from the data description what the ordinality of this variable is. 
+# My assumption is that since conditions 4 and 5 are so rare these are likely the better condition items. 
+# We can try and verify this. If a higher item condition is better, 
+# it should have a positive correlation with price. Let’s see if that is the case.
+
+train[, .(.N, median_price = median(price)), by = item_condition_id][order(item_condition_id)]
+ggplot(data = train, 
+       aes(x = as.factor(item_condition_id), 
+           y = log(price + 1))) + 
+  geom_boxplot(fill = 'cyan2', 
+               color = 'darkgrey')
+
+#######################
+# Shipping
+######################
+
+table(train$shipping)
+
+# My inital thought is that items where the shipping fee is paid by the seller will be higher-priced. 
+#However, there are a number of conflating factors. T
+# This may be true within specific product categories and item conditions, 
+# but not when comparing items on the aggregate. Let’s see.
+
+train %>%
+  ggplot(aes(x = log(price+1), fill = factor(shipping))) + 
+  geom_density(adjust = 2, alpha = 0.6) + 
+  labs(x = 'Log price', y = '', title = 'Distribution of price by shipping') #Items where the shipping is paid by the seller have a lower average price.
+
+
+########################
+# Brand
+########################
+
+train[, .(median_price = median(price)), by = brand_name] %>%
+  head(25) %>%
+  ggplot(aes(x = reorder(brand_name, median_price), y = median_price)) + 
+  geom_point(color = 'red') + 
+  scale_y_continuous(labels = scales::dollar) + 
+  coord_flip() +
+  labs(x = '', y = 'Median price', title = 'Top 25 most expensive brands')
+# Leaving NA part 
+
+####################
+# Item category
+###################
+train[, .(median = median(price)), by = category_name][order(median, decreasing = TRUE)][1:30] %>%
+  ggplot(aes(x = reorder(category_name, median), y = median)) + 
+  geom_point(color = 'orangered2') + 
+  coord_flip() + 
+  labs(x = '', y = 'Median price', title = 'Top 30 categoies - Median Price') + 
+  scale_y_continuous(labels = scales::dollar)
+
+#################################
+# Word cloud - brand Name
+#################################
+
+train$brand_name <- toupper(train$brand_name)
+train_brand <- table(train[,5])
+train_brand <- data.frame(train_brand)
+colnames(train_brand) <- c("brand", "freq")
+train_brand <- train_brand[order(train_brand$freq, decreasing=TRUE),]
+
+
+train_brand_cloud <- train_brand[c(2:200),] 
+#As the wordcloud has limitation on no. of character, you would see some error below
+
+wordcloud(words = train_brand_cloud$brand, freq = train_brand_cloud$freq, min.freq = 1,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+```
+
+# 4) Feature Engineering
+
+```{r}
+#########################################
+# Feature Engineering
+
+# Word Counts
+# letter Counts
+# Splitting the categories into levels
+# Filling the missing values
+#########################################
+
+
+# In natural language processing , it is always good to add additional text attributes as new features.
+# Like - characterlength, word count, etc..
+
+# Letter count/character count for the attributes - item description, item name
+train$name_length <- nchar(train$name)
+train$description_length <- nchar(train$item_description)
+
+# Word Count for the attributes - item desciption, item name
+train$name_words <- str_count(train$name,'\\S+')
+train$description_words <- str_count(train$item_description,'\\S+')
+
+# View(head(train))
+
+
+# Splitting the categories into attribute levels as we can see that category column combines the ...
+# ... whole tree of categories in one line . Most items have three categories (1-top category,....)
+# ... ( 2-first sub category, 3-second subcategory). Some items have additional forth subcategory.
+temp <- str_split(train$category_name, "/",n=3, simplify = TRUE)
+
+temp <- as_tibble(temp)
+
+names(temp) <- paste0('category',1:3)
+
+train <- bind_cols(train,temp)
+
+train$category_name <- NULL
+
+rm(temp)
+
+
+# Filling the MIssing Values
+colSums(is.na(train))
+
+train$brand_name[is.na(train$brand_name)] <- 'undefined'
+train$category1[is.na(train$category1)] <- 'undefined'
+train$category2[is.na(train$category2)] <- 'undefined'
+train$category3[is.na(train$category3)] <- 'undefined'
+
+# Doing this same for test data SET
+test$name_length = nchar(test$name)
+test$description_length = nchar(test$item_description)
+test$name_words = str_count(test$name, '\\S+')
+test$description_words = str_count(test$item_description, '\\S+')
+
+temp = as_tibble(str_split(test$category_name, "/", n = 3, simplify = TRUE))
+names(temp) = paste0("category", 1:3)
+test = bind_cols(test, temp)
+test$category_name = NULL
+rm(temp)
+
+test$brand_name[is.na(test$brand_name)] = "undefined"
+test$category1[is.na(test$category1)] = "undefined" 
+test$category2[is.na(test$category2)] = "undefined" 
+test$category3[is.na(test$category3)] = "undefined"
+
+print(head(train))
+#################################
+# COmbine TRAIN and TEST for later use , like NLP tasks
+##########################################################
+
+nrow_train <- nrow(train)
+nrow_test <- nrow(test)
+price <- train$price_log
+train$price <- NULL
+all <- bind_rows(train,test)
+
+```
+
+# 5) Tokenization and TF-IDF Implementation
+
+```{r}
+####################################
+# Tokenization
+###################################
+
+# Tokenization/Feature Matrix :- What it does, is it creates a huge matrix making a separate variable 
+# out of each word, that we have in our dataset. 
+# So the new object that we create will have an inormous amount of columns indicating 1 or 0 
+# in each of the word's rows showing if the word is present or not present in this item description 
+# or name
+
+##################################
+# Tokenization of item description
+
+# Initial PreProcessing - Removing numbers, punctuations, symbols, hypens
+# Convrting to lowers
+# REmoval of Stop words
+# Applying stemming
+# Careated bag of words/doumented frequrncy matrix
+# Preprocess the document frequency matrix
+# Apply TF_IDF
+####################################
+
+#Initial preprocessing as we will remove all the numbers, punctuation, symbol and hypens
+all.items.tokens <- tokens(all$item_description,
+                           what="word",
+                           remove_numbers = T,
+                           remove_punct = T,
+                           remove_symbols = T,
+                           remove_separators = T)
+
+# For final further preprocessing we will choose a random row and 
+# see how the item description is going to change
+
+all.items.tokens[149]
+
+# To Lower
+all.items.tokens <- tokens_tolower(all.items.tokens)
+all.items.tokens[149]
+
+# Stopwords
+all.items.tokens <- tokens_select(all.items.tokens,stopwords(),selection = 'remove')
+all.items.tokens[149]
+
+# Stem words
+all.items.tokens <- tokens_wordstem(all.items.tokens, language = 'english')
+all.items.tokens[149]
+
+# Creating a BAG OF WORDS
+all.items.dfm <- dfm(all.items.tokens)
+
+dim(all.items.dfm) # As you can see below, we have created a matrix with 171K columns, each for every word
+
+# We can preprocess such a matri/trim our matrix and include only most common variables 
+all.items.dfm.trim <- dfm_trim(all.items.dfm,
+                               min_termfreq = 300)
+
+# Applying the TF-IDF
+all.items.tfidf <- dfm_tfidf(all.items.dfm.trim)
+
+####################################
+# Tokenization of attribute items_name
+
+# same steps like item-description
+########################################
+
+all.names.tokens = tokens(all$name, what = "word",
+                          remove_numbers = TRUE, remove_punct = TRUE,
+                          remove_symbols = TRUE, remove_separators = TRUE)
+
+all.names.tokens = tokens_tolower(all.names.tokens)
+all.names.tokens = tokens_select(all.names.tokens, stopwords(),
+                                 selection = "remove")
+all.names.tokens = tokens_wordstem(all.names.tokens, language = "english")
+
+
+# bag of words
+all.names.dfm = dfm(all.names.tokens)
+
+# trim
+all.names.dfm.trim = dfm_trim(all.names.dfm, min_termfreq = 100) 
+gc()
+
+# apply the TF IDF
+all.names.tfidf = dfm_tfidf(all.names.dfm.trim)
+all.names.tfidf
+topfeatures((all.names.tfidf))
+```
+
+# 6) Creating a sparse matrix
+```{r}
+# In the next steps when I had to create a sparse_matrix, 
+# I have run into a NA problem, which had been found in our initial dataframe, 
+# so in order to overpass it quickly, I have applied an NA PASS global rule. 
+# But remember to opt out of this setting when you are done
+
+previous_na_action = options('na.action')
+options(na.action='na.pass')
+
+# Spare matrix creation
+sparse_matrix = sparse.model.matrix(~item_condition_id + brand_name + shipping + name_length + 
+                                      description_length + name_words + description_words + 
+                                      category1 + category2 + category3,
+                                    data = all)         # here we have included all of our initial variables, except the text variables (name and description),
+                                                        # which we have preprocessed separately
+
+class(all.items.tfidf) = class(sparse_matrix)
+class(all.names.tfidf) = class(sparse_matrix)
+
+#COMBINE OUR NEWLY CREATED SPARSE_MATRIX WITH OUR PREPROCESSED TF/IDF TEXT DATAFRAMES
+data = cbind(sparse_matrix, all.items.tfidf, all.names.tfidf)
+
+# Turn off the na.action setting
+options(na.action=previous_na_action$na.action)
+
+# Splitting back the train and test sets
+sparse_train <- data[seq_len(nrow(train)),]
+  
+sparse_test <- data[seq(from=nrow(train)+1,to=nrow(data)),]
+```
+
+# 7) Model Training
+```{r}
+# We will train our model using xgboostwith cross-validation
+
+# Set the target variable
+Label <- price
+
+# Next we will create DMatrix from test and train sets in order to feed them properly to our xgboost
+
+dtest1 <- xgb.DMatrix(sparse_test)
+dtrain1 <- xgb.DMatrix(sparse_train,
+                       label=data.matrix(Label))
+
+# Set up xg boost paramters
+# optimal paramters, find from hyper parameter tuning
+xgb_params <- list(booster = 'gbtree',
+                   colsample_bytree=0.7,
+                   subsample=0.7,
+                   eta=0.05,
+                   objective='reg:linear',
+                   max_depth = 5,
+                   min_child_weight= 1,
+                   eval_metric= "rmse")
+
+
+##################################
+# Modelling Steps
+# Set timer to see how long will it take
+# Set seed
+# TRain the model
+# Show model results
+# Check the timing
+# Prediction
+###################################
+
+start.time <- Sys.time()
+
+set.seed(400)
+
+xgb.model <- xgb.train(params = xgb_params,
+                       data = dtrain1,
+                       nrounds = 500,
+                       watchlist = list(train=dtrain1),
+                       print_every_n = 50,
+                       early_stopping_rounds = 100) # RMSE:- 0.509421
+
+total.time <- Sys.time() - start.time
+total.time
+```
+
+# 8) Prediction and Saving to csv file
+```{r}
+pred <- predict(xgb.model,sparse_test)
+
+# convert back to prce value to exp
+
+# make a csv, data frame from our predictions
+results = data.frame(
+  test_id = as.integer(seq_len(nrow(test)) - 1),
+  price = pred
+)
+
+# Make a csv file for submission
+write.csv(results, file = "xgb_2.csv", row.names = FALSE)
+```
+
+# 9) Conclusion
+We can still improve the accuracy/rmse of the model by implementing:
+
+  * Ensemble Models
+  * Averaging Regressors
+  * **Deep Learning - Tensors**
+  * **More Data**

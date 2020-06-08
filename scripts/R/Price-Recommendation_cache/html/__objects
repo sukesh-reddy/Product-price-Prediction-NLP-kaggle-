@@ -1,0 +1,8 @@
+unnamed-chunk-1	.Random.seed
+unnamed-chunk-2	test	train
+unnamed-chunk-3	train	train_brand	train_brand_cloud
+unnamed-chunk-4	all	nrow_test	nrow_train	price	test	train
+unnamed-chunk-5	all.items.dfm	all.items.dfm.trim	all.items.tfidf	all.items.tokens	all.names.dfm	all.names.dfm.trim	all.names.tfidf	all.names.tokens
+unnamed-chunk-6	all.items.tfidf	all.names.tfidf	data	previous_na_action	sparse_matrix	sparse_test	sparse_train
+unnamed-chunk-7	dtest1	dtrain1	Label	start.time	total.time	xgb.model	xgb_params
+unnamed-chunk-8	pred	results
